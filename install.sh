@@ -18,7 +18,7 @@ CMD_ERRORS=false
 
 user_check() {
 	if [ "$(id -u)" -eq 0 ]; then
-		fatal "Script should not be run as root. Try './install.sh'\n"
+		warning "Script should not be run as root. Try './install.sh'\n"
 	fi
 }
 
@@ -56,7 +56,7 @@ find_config() {
 	if [ ! -f "$CONFIG_DIR/$CONFIG_FILE" ]; then
 		CONFIG_DIR="/boot"
 		if [ ! -f "$CONFIG_DIR/$CONFIG_FILE" ]; then
-			fatal "Could not find $CONFIG_FILE!"
+			warning "Could not find $CONFIG_FILE!"
 		fi
 	fi
 	inform "Using $CONFIG_FILE in $CONFIG_DIR"

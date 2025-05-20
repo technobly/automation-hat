@@ -6,24 +6,27 @@ import ads1015
 import gpiod
 import gpiodevice
 import sn3218
-from gpiod.line import Bias, Direction, Value
 
 from .pins import AsyncWorker, ObjectCollection, StoppableThread  # noqa: F401
 
 __version__ = '1.0.0'
 
 
-RELAY_1 = 13
-RELAY_2 = 19
-RELAY_3 = 16
+# GPIO numbers for Particle Tachyon
+RELAY_1 = 106  #13
+RELAY_2 = 145  #19
+RELAY_3 = 32   #16
 
-INPUT_1 = 26
-INPUT_2 = 20
-INPUT_3 = 21
+INPUT_1 = 6    #26
+INPUT_2 = 146  #20
+INPUT_3 = 147  #21
 
-OUTPUT_1 = 5
-OUTPUT_2 = 12
-OUTPUT_3 = 6
+OUTPUT_1 = 18  #5
+OUTPUT_2 = 78  #12
+OUTPUT_3 = 19  #6
+
+INACTIVE = 0
+ACTIVE   = 1
 
 UPDATES_PER_SECOND = 30
 
@@ -44,7 +47,15 @@ _gpiochip = None
 class SNLight(object):
     def __init__(self, index):
         self.index = index
+        self._is_setup = False
         self._max_brightness = float(128)
+
+    def setup(self):
+        if self._is_setup:
+            return False
+
+        setup()
+        self._is_setup = True
 
     def toggle(self):
         """Toggle the light from on to off or off to on"""
@@ -74,6 +85,8 @@ class SNLight(object):
 
         if self.index is None:
             return
+
+        self.setup()
 
         if not isinstance(value, (int, float)):
             raise TypeError("Value must be int or float")
@@ -137,13 +150,14 @@ class Pin(object):
         self._last_value = None
         self._is_setup = False
         self._gpioline = None
+        self._CONSUMER = "automation_hat"
 
     def __call__(self):
         return filter(lambda x: x[0] != '_', dir(self))
 
     def read(self):
         self.setup()
-        return self._gpioline.get_value(self.pin) == Value.ACTIVE
+        return self._gpioline.get_value() == ACTIVE
 
     def setup(self):
         pass
@@ -181,11 +195,17 @@ class Input(Pin):
 
         setup()
 
-        self.pin = _gpiochip.line_offset_from_id(self.pin)
-
-        self._gpioline = _gpiochip.request_lines(consumer="AH", config={
-            self.pin: gpiod.LineSettings(direction=Direction.INPUT, bias=Bias.DISABLED)
-        })
+        self._gpioline = _gpiochip.get_line(self.pin)
+        self._gpioline.release()
+        if hasattr(gpiod, "LINE_REQ_DIR_IN"):
+            self._gpioline.request(
+                consumer=self._CONSUMER, type=gpiod.LINE_REQ_DIR_IN, flags=flags
+            )
+        else:
+            config = gpiod.line_request()
+            config.consumer = self._CONSUMER
+            config.request_type = gpiod.line_request.DIRECTION_INPUT
+            self._gpioline.request(config)
 
         self._is_setup = True
 
@@ -196,9 +216,11 @@ class Input(Pin):
 
     def read(self):
         self.setup()
-        value = self._gpioline.get_value(self.pin) == Value.ACTIVE
-        if self._en_auto_lights:
-            self.light.write(value)
+        value = self._gpioline.get_value() == ACTIVE
+        # Auto Lights disabled for Inputs due to them always reading high on Tachyon.
+        # These LEDs can be repurposed as general indicators.
+        # if self._en_auto_lights:
+        #     self.light.write(value)
         return value
 
 
@@ -216,11 +238,17 @@ class Output(Pin):
 
         setup()
 
-        self.pin = _gpiochip.line_offset_from_id(self.pin)
-
-        self._gpioline = _gpiochip.request_lines(consumer="AH", config={
-            self.pin: gpiod.LineSettings(direction=Direction.OUTPUT, bias=Bias.DISABLED, output_value=Value.INACTIVE)
-        })
+        self._gpioline = _gpiochip.get_line(self.pin)
+        self._gpioline.release()
+        if hasattr(gpiod, "LINE_REQ_DIR_OUT"):
+            self._gpioline.request(
+                consumer=self._CONSUMER, type=gpiod.LINE_REQ_DIR_OUT
+            )
+        else:
+            config = gpiod.line_request()
+            config.consumer = self._CONSUMER
+            config.request_type = gpiod.line_request.DIRECTION_OUTPUT
+            self._gpioline.request(config)
 
         self._is_setup = True
         return True
@@ -236,7 +264,7 @@ class Output(Pin):
         :param value: Value to write, either 1 for HIGH or 0 for LOW
         """
         self.setup()
-        self._gpioline.set_value(self.pin, Value.ACTIVE if value else Value.INACTIVE)
+        self._gpioline.set_value(ACTIVE if value else INACTIVE)
         if self._en_auto_lights:
             self.light.write(1 if value else 0)
 
@@ -273,14 +301,20 @@ class Relay(Output):
 
         setup()
 
-        self.pin = _gpiochip.line_offset_from_id(self.pin)
-
         if is_automation_phat() and self.name == "one":
             self.pin = RELAY_3
 
-        self._gpioline = _gpiochip.request_lines(consumer="AH", config={
-            self.pin: gpiod.LineSettings(direction=Direction.OUTPUT, bias=Bias.DISABLED, output_value=Value.INACTIVE)
-        })
+        self._gpioline = _gpiochip.get_line(self.pin)
+        self._gpioline.release()
+        if hasattr(gpiod, "LINE_REQ_DIR_OUT"):
+            self._gpioline.request(
+                consumer=self._CONSUMER, type=gpiod.LINE_REQ_DIR_OUT
+            )
+        else:
+            config = gpiod.line_request()
+            config.consumer = self._CONSUMER
+            config.request_type = gpiod.line_request.DIRECTION_OUTPUT
+            self._gpioline.request(config)
 
         self._is_setup = True
         return True
@@ -295,7 +329,7 @@ class Relay(Output):
         if is_automation_phat() and self.name in ["two", "three"]:
             warnings.warn("Relay '{}' is not supported on Automation pHAT".format(self.name))
 
-        self._gpioline.set_value(self.pin, Value.ACTIVE if value else Value.INACTIVE)
+        self._gpioline.set_value(ACTIVE if value else INACTIVE)
 
         if self._en_auto_lights:
             if value:
